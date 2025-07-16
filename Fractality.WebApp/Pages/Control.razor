@@ -26,8 +26,27 @@
                     AllowClear="false" AllowFiltering="false" Style="width: 100%; max-width: 600px" Name="DropDownDevices" Placeholder="-- Select OpenCL Device --" FilterAsYouType="false" AllowSelectAll="false">
     </RadzenDropDown>
     <RadzenButton Name="ButtonClInitialize" Style="width: 120px; font-family: Arial; background-color: #e0e0e0" Text="Initialize" ButtonType="Radzen.ButtonType.Submit" ButtonStyle="Radzen.ButtonStyle.Light" Size="Radzen.ButtonSize.Medium" Variant="Radzen.Variant.Filled" Disabled="false" Click="@ButtonClInitializeClick"></RadzenButton>
+</RadzenStack>
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
     <RadzenText Text="OpenCL Service Status:" TextStyle="TextStyle.Subtitle1" />
     <RadzenText Text="@openClServiceInfo.Status" Style="@(openClServiceInfo.Initialized ? "color: green" : "color: red")" />
+</RadzenStack>
+
+<!-- Image -->
+<RadzenStack Orientation="Orientation.Vertical" Style="width:100%; padding: 1rem;">
+    <RadzenImage Style="width:100%; height:auto;" Src="@imageBase64" />
+</RadzenStack>
+
+<!-- Prompt input textbox with button -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenTextBox Name="TextBoxPrompt" Style="width: 85%;" Placeholder="Prompt about image ..." @bind-Value="@prompt" />
+    <RadzenButton Name="ButtonRunPrompt" Style="width: 12%; max-width: 120px; font-family: Arial; background-color: #e0e0e0" Text="Ask" ButtonType="ButtonType.Submit" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Medium" Variant="Variant.Filled" Click="@AskPrompt"></RadzenButton>
+</RadzenStack>
+
+<!-- Prompt response -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenText Text="Response:" TextStyle="TextStyle.Subtitle1" />
+    <RadzenTextBox Name="TextBoxResponse" Style="width: 100%; height: 100px;" @bind-Value="@response" ReadOnly="true" />
 </RadzenStack>
 
 <!-- Images list -->
@@ -43,9 +62,38 @@
     </RadzenStack>
 </RadzenStack>
 
-<RadzenStack Orientation="Orientation.Vertical" Style="width:100%; padding: 1rem;">
-    <RadzenImage Style="width:100%; height:auto;" Src="@imageBase64" />
+<!-- Mandelbrot execution section (input elements + button)-->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenTextBox Name="TextBoxKernelName" Style="width: 100px;" Placeholder="Kernel Name" @bind-Value="@kernelName" />
+    <RadzenTextBox Name="TextBoxKernelVersion" Style="width: 100px;" Placeholder="Kernel Version" @bind-Value="@kernelVersion" />
+    <RadzenNumeric Name="NumericWidth" Style="width: 80px;" Placeholder="Width" @bind-Value="@width" />
+    <RadzenNumeric Name="NumericHeight" Style="width: 80px;" Placeholder="Height" @bind-Value="@height" />
+    <RadzenNumeric Name="NumericZoom" Style="width: 80px;" Placeholder="Zoom" @bind-Value="@zoom" />
+    <RadzenNumeric Name="NumericOffsetX" Style="width: 80px;" Placeholder="Offset X" @bind-Value="@offsetX" />
+    <RadzenNumeric Name="NumericOffsetY" Style="width: 80px;" Placeholder="Offset Y" @bind-Value="@offsetY" />
+    <RadzenNumeric Name="NumericIterations" Style="width: 80px;" Placeholder="Iterations" @bind-Value="@iterations" />
+    <RadzenColorPicker Name="ColorPickerColor" IconColor="@color" Change="@((args) => color = args)" Style="width: 100px; height: 40px;" />
+    <RadzenCheckBox Name="CheckBoxCopyGuid" Text="Copy Guid?" @bind-Value="@copyGuid"></RadzenCheckBox>
+    <RadzenCheckBox Name="CheckBoxAllowTempSession" Text="Allow Temp Session?" @bind-Value="@allowTempSesion"></RadzenCheckBox>
+    <RadzenButton Name="ButtonExecuteMandelbrot"
+                  Style="width: 120px; font-family: Arial; background-color: #e0e0e0"
+                  Text="Execute"
+                  ButtonType="ButtonType.Submit"
+                  ButtonStyle="ButtonStyle.Light"
+                  Size="ButtonSize.Medium"
+                  Variant="Variant.Filled"
+                  Click="@ExecuteMandelbrot"></RadzenButton>
 </RadzenStack>
+
+<!-- Avaiable OpenCL Kernels ListBox -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenListBox TValue="string" Data=@openClKernels TextProperty="FunctionName" ValueProperty="Index" Style="width: 100%; max-width: 600px; height: 200px;" Name="ListBoxOpenClKernels"
+                   Placeholder="-- Select OpenCL Kernel --" AllowClear="false" AllowFiltering="false">
+    </RadzenListBox>
+</RadzenStack>
+        
+
+
 
 
 <div id="logContainer" @ref="logContainer" style="height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; background-color: #f9f9f9;">
@@ -69,20 +117,24 @@
 
     private string imageBase64 = string.Empty;
 
+    private string prompt = string.Empty;
+    private string response = string.Empty;
+
     private string kernelName = "mandelbrotPrecise";
-    private string kernelVersion = "03";
+    private string kernelVersion = "01";
     private int width = 1920;
     private int height = 1080;
     private double zoom = 1.0;
     private double offsetX = 0.0;
     private double offsetY = 0.0;
     private int iterations = 32;
-    private Color color = Color.Black;
-    private int colorRed => color.R;
-    private int colorGreen => color.G;
-    private int colorBlue => color.B;
-    private bool copyGuid = false;
-    private bool allowTempSesion = true;
+    private string color = "#000000"; // Black
+    private Color systemColor = ColorTranslator.FromHtml("#000000");
+    private int colorRed => systemColor.R;
+    private int colorGreen => systemColor.G;
+    private int colorBlue => systemColor.B;
+    private bool copyGuid = true;
+    private bool allowTempSesion = false;
 
     private ImageObjInfo selectedImageInfo => imageInfos.FirstOrDefault(i => i.Guid == selectedImageId) ?? new ImageObjInfo(null);
 
@@ -345,6 +397,33 @@
         catch (Exception ex)
         {
             AddLogEntry($"Error executing Mandelbrot kernel: {ex.Message}");
+        }
+    }
+
+
+    private async Task AskPrompt()
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            AddLogEntry("Prompt is empty. Please enter a prompt before asking.");
+            return;
+        }
+        try
+        {
+            AddLogEntry($"Asking prompt: '{prompt}'");
+            //response = await ApiClient.AskPromptAsync(prompt);
+            AddLogEntry($"Response received: {response}");
+        }
+        catch (Exception ex)
+        {
+            response = $"Error: {ex.Message}";
+            AddLogEntry($"Error asking prompt: {ex.Message}");
+        }
+        finally
+        {
+            prompt = string.Empty;
+            await Task.Yield();
+            StateHasChanged();
         }
     }
 }

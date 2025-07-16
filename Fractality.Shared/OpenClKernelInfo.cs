@@ -9,6 +9,7 @@ namespace Fractality.Shared
 {
 	public class OpenClKernelInfo
 	{
+		public int Index { get; set; } = -1;
 		public string FilePath { get; set; } = string.Empty;
 		public string FunctionName { get; set; } = string.Empty;
 		public List<string> ArgumentNames { get; set; } = [];
@@ -20,7 +21,9 @@ namespace Fractality.Shared
 
 		public OpenClKernelInfo(OpenClKernelCompiler? compiler, int index)
 		{
-            if (compiler == null)
+			this.Index = index;
+
+			if (compiler == null)
             {
 				return;
             }

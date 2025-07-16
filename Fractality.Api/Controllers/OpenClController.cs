@@ -161,10 +161,9 @@ namespace Fractality.Api.Controllers
 			try
 			{
 				var infos = await Task.Run(() => this.openClService.MemoryRegister.Memory
-					.Select((memory, index) => new OpenClMemoryInfo(memory))
-					.ToList());
+					.Select((memory, index) => new OpenClMemoryInfo(memory)));
 
-				if (infos.Count == 0)
+				if (infos.LongCount() == 0)
 				{
 					return this.NoContent();
 				}

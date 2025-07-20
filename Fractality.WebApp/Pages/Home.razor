@@ -1,0 +1,193 @@
+﻿@page "/home"
+@page "/"
+@using Fractality.Client
+@using Fractality.Shared
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.JSInterop
+@using Radzen
+@using Radzen.Blazor
+
+@inject IJSRuntime JSRuntime
+@inject ApiClient ApiClient
+@inject ApiUrl ApiConfig
+
+<h1 style="font-family: 'Arial Black'">Fractality Home : Control<br></h1>
+
+<!-- OpenCL Section -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenDropDown Data="@openClDevices" TextProperty="DeviceName" ValueProperty="DeviceId" @bind-Value="@selectedClDeviceIndex"
+                    AllowClear="false" AllowFiltering="false" Style="width: 100%; max-width: 600px" Name="DropDownDevices" Placeholder="-- Select OpenCL Device --" FilterAsYouType="false" AllowSelectAll="false">
+    </RadzenDropDown>
+    <RadzenButton Name="ButtonClInitialize" Style="width: 120px; font-family: Arial; background-color: #e0e0e0" Text="Initialize" ButtonType="Radzen.ButtonType.Submit" ButtonStyle="Radzen.ButtonStyle.Light" Size="Radzen.ButtonSize.Medium" Variant="Radzen.Variant.Filled" Disabled="false" Click="@ButtonClInitializeClick"></RadzenButton>
+    <RadzenButton Name="ButtonClDispose" Style="width: 120px; font-family: Arial; background-color: #e0e0e0" Text="Dispose" ButtonType="Radzen.ButtonType.Reset" ButtonStyle="Radzen.ButtonStyle.Light" Size="Radzen.ButtonSize.Medium" Variant="Radzen.Variant.Filled" Disabled="@(openClServiceInfo.Initialized == false)" Click="@ButtonClDisposeClick"></RadzenButton>
+</RadzenStack>
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenText Text="OpenCL Service Status:" TextStyle="TextStyle.Subtitle1" />
+    <RadzenText Text="@openClServiceInfo.Status" Style="@(openClServiceInfo.Initialized ? "color: green" : "color: red")" />
+</RadzenStack>
+
+<!-- Available OpenCL Kernels ListBox -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenListBox TValue="int" Data="@openClKernels" TextProperty="Entry" ValueProperty="Index" Style="width: 100%; max-width: 600px; height: 200px;" Name="ListBoxOpenClKernels"
+                   Placeholder="-- Select OpenCL Kernel --" AllowClear="false" AllowFiltering="false">
+    </RadzenListBox>
+</RadzenStack>
+
+<!-- Scrolling log list -->
+<div id="logContainer" @ref="logContainer" style="height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; background-color: #f9f9f9;">
+    @foreach (var logEntry in logEntries)
+    {
+        <div>@logEntry</div>
+    }
+</div>
+
+
+
+@code{
+
+    private int selectedClDeviceIndex = -1;
+    private OpenClServiceInfo openClServiceInfo = new(null);
+    private OpenClUsageInfo openClUsageInfo = new(null);
+
+    private IEnumerable<OpenClDeviceInfo> openClDevices = [];
+    private IEnumerable<OpenClKernelInfo> openClKernels = [];
+    private IEnumerable<OpenClMemoryInfo> openClMemoryInfos = [];
+
+    private IEnumerable<ImageObjInfo> imageInfos = [];
+
+    private readonly List<string> logEntries = [];
+    private ElementReference logContainer;
+
+
+
+    private void AddLogEntry(string message)
+    {
+        logEntries.Add($"{DateTime.Now:HH:mm:ss:fff} - {message}");
+        if (logEntries.Count > 100)
+        {
+            logEntries.RemoveAt(0);
+        }
+
+        StateHasChanged();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        AddLogEntry("Initializing Control page...");
+        await RefreshInfos();
+        await SelectClDeviceByName("Core");
+    }
+
+    protected async Task RefreshInfos()
+    {
+        // Get OpenCL infos
+        openClServiceInfo = await ApiClient.GetOpenClServiceInfoAsync();
+        openClUsageInfo = await ApiClient.GetOpenClUsageInfoAsync();
+        openClDevices = await ApiClient.GetOpenClDevicesAsync();
+        openClKernels = await ApiClient.GetOpenClKernelsAsync();
+        openClMemoryInfos = await ApiClient.GetOpenClMemoryInfosAsync();
+
+        // Get image infos
+        imageInfos = await ApiClient.GetImagesAsync();
+
+        AddLogEntry($"Refreshed infos.");
+
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (logEntries.Any())
+        {
+            await JSRuntime.InvokeVoidAsync("eval", $@"
+                var el = document.getElementById('logContainer');
+                if (el) {{
+                    el.scrollTop = el.scrollHeight;
+                }}
+            ");
+        }
+    }
+
+    protected async Task SelectClDeviceByName(string name = "Core", string fallback = "Intel")
+    {
+        if (!openClDevices.Any())
+        {
+            AddLogEntry($"No devices loaded yet to select from.");
+            StateHasChanged();
+            return;
+        }
+
+        var foundDevice = openClDevices.FirstOrDefault(d => d.DeviceName.Contains(name, StringComparison.OrdinalIgnoreCase));
+        if (foundDevice != null)
+        {
+            selectedClDeviceIndex = foundDevice.DeviceId;
+            AddLogEntry($"Selected device: '{foundDevice.DeviceName}' (ID: {foundDevice.DeviceId})");
+        }
+        else
+        {
+            await this.SelectClDeviceByName(fallback, "");
+
+            if (selectedClDeviceIndex >= 0)
+            {
+                return;
+            }
+
+            AddLogEntry($"No device found with name containing '{name}'.");
+        }
+        StateHasChanged();
+
+        await Task.Yield();
+    }
+
+
+    protected async Task ButtonClInitializeClick(Microsoft.AspNetCore.Components.Web.MouseEventArgs args)
+    {
+        if (selectedClDeviceIndex == -1)
+        {
+            AddLogEntry("Please select a CL-Device to initialize.");
+            StateHasChanged();
+            return;
+        }
+
+        AddLogEntry($"Started initializing CL-Device with ID {selectedClDeviceIndex} ...");
+        StateHasChanged();
+
+        openClServiceInfo = await ApiClient.InitializeOpenClServiceAsync(selectedClDeviceIndex);
+        if (openClServiceInfo.Initialized)
+        {
+            AddLogEntry($"OpenCL device initialized successfully: {openClServiceInfo.DeviceName} [{openClServiceInfo.DeviceId}]");
+        }
+        else
+        {
+            AddLogEntry($"Failed to initialize OpenCL device [{selectedClDeviceIndex}].");
+        }
+
+        await RefreshInfos();
+    }
+
+    protected async Task ButtonClDisposeClick(Microsoft.AspNetCore.Components.Web.MouseEventArgs args)
+    {
+        if (openClServiceInfo.Initialized == false)
+        {
+            AddLogEntry("OpenCL service is not initialized, nothing to dispose.");
+            StateHasChanged();
+            return;
+        }
+
+        AddLogEntry($"Disposing OpenCL service...");
+        StateHasChanged();
+        openClServiceInfo = await ApiClient.DisposeOpenClAsync();
+        
+        if (!openClServiceInfo.Initialized)
+        {
+            AddLogEntry("OpenCL service disposed successfully.");
+        }
+        else
+        {
+            AddLogEntry("Failed to dispose OpenCL service.");
+        }
+
+        await RefreshInfos();
+    }
+
+}

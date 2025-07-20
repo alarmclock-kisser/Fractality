@@ -1,0 +1,339 @@
+﻿@page "/audio"
+@using Fractality.Client
+@using Fractality.Shared
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.JSInterop
+@using OpenFractality.Shared
+@using Radzen
+@using Radzen.Blazor
+
+@inject IJSRuntime JSRuntime
+@inject ApiClient ApiClient
+@inject ApiUrl ApiConfig
+
+<h1 style="font-family: 'Arial Black'">Fractality : Audio Processor<br></h1>
+
+<!-- Waveform -->
+<RadzenStack @onkeydown:preventDefault>
+    <RadzenStack Orientation="Orientation.Vertical"
+                 Style="width:100%; padding: 1rem;"
+                 tabindex="0">
+        <RadzenImage
+            Style="width:100%; height:auto; cursor: pointer;"
+            Src="@waveformBase64" />
+    </RadzenStack>
+</RadzenStack>
+
+<!-- Playback elements -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenNumeric Name="NumericVolume" Style="width: 15%; max-width: 240px" Placeholder="Volume" @bind-Value="@volumeInt" />
+    <RadzenButton Name="ButtonPlay" Style="width: 15%; max-width: 300px" Text="Play" ButtonType="ButtonType.Submit" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Medium" Variant="Variant.Filled" Click="@Play"></RadzenButton>
+    <RadzenButton Name="ButtonStop" Style="width: 15%; max-width: 300px" Text="Stop" ButtonType="ButtonType.Reset" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Medium" Variant="Variant.Filled" Click="@StopAll"></RadzenButton>
+    <RadzenText Name="TextDuration" Style="width: 20%" Text="@(duration + " sec.")"></RadzenText>
+</RadzenStack>
+
+<!-- Tracks list -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.5rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenListBox TValue="Guid" Data="@audioInfos" TextProperty="Entry" ValueProperty="Guid"
+                   @bind-Value="@selectedAudioId" Multiple="false" Change="@(args => LoadWaveform(args as Guid?))" @onselect="@StateHasChanged"
+                   Style="width: 100%; max-width: 600px; height: 200px;" Name="ListBoxAudioObjects" Placeholder="-- Select Audio Object --">
+    </RadzenListBox>
+    <RadzenStack Orientation="Orientation.Vertical" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.5rem" class="re-p-sm-12" Reverse="false">
+        <RadzenText Text="Audio Upload" TextStyle="TextStyle.Subtitle1" />
+        <InputFile id="audioUpload" OnChange="OnAudioUpload" accept="audio/*" class="rz-mb-2" />
+        <RadzenButton Name="ButtonDownloadAudioObject" Style="width: 140px; font-family: Arial; background-color: #e0e0e0" Text="Download" ButtonType="ButtonType.Submit" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Medium" Variant="Variant.Filled" Disabled="@(selectedAudioInfo.Guid == Guid.Empty)" Click="@OnDownloadSelected"></RadzenButton>
+        <RadzenButton Name="ButtonDeleteAudioObject" Style="width: 140px; font-family: Arial; background-color: #e0e0e0" Text="Remove" ButtonType="ButtonType.Submit" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Medium" Variant="Variant.Filled" Disabled="@(selectedAudioId == Guid.Empty)" Click="@OnRemoveAudioObj"></RadzenButton>
+    </RadzenStack>
+</RadzenStack>
+
+<!-- Time stretching section -->
+<RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0.1rem" class="rz-p-sm-12" Reverse="false">
+    <RadzenDropDown Data="@timestretchKernels" TextProperty="Entry" ValueProperty="FunctionName" @bind-Value="@selectedKernelName"
+                    AllowClear="false" AllowFiltering="false" Style="width: 100%; max-width: 600px" Name="DropDownTimestretchKernels" Placeholder="-- Select Timestretch Kernel --"
+                    FilterAsYouType="false" AllowSelectAll="false" Change="@StateHasChanged">
+    </RadzenDropDown>
+    <RadzenButton Name="ButtonTimestretchAudio" Style="width: 160px; font-family: Arial; background-color: #e0e0e0" Text="Timestretch" ButtonType="ButtonType.Submit" ButtonStyle="ButtonStyle.Light" Size="ButtonSize.Medium" Variant="Variant.Filled"
+                  Disabled="@(string.IsNullOrEmpty(selectedKernelName) || selectedAudioId == Guid.Empty)"
+                  Click="@ExecuteTimestretch"></RadzenButton>
+    <RadzenNumeric Name="NumericInitialBpm" TValue="float" Style="width: 15%;" Placeholder="Initial BPM" Value="@initialBpm" Disabled="true" />
+    <RadzenText Text=" → " Style="width: 5%" ></RadzenText>
+    <RadzenNumeric Name="NumericTargetBpm" TValue="int" Style="width: 15%;" Placeholder="Target BPM" @bind-Value="@targetBpmInt" />
+    <RadzenNumeric Name="NumericChunkSize" TValue="int" Style="width: 15%;" Placeholder="Chunk size" @bind-Value="@chunkSize" />
+    <RadzenNumeric Name="NumericOverlap" TValue="int" Style="width: 15%;" Placeholder="Overlap %" @bind-Value="@overlapInt" />
+    <RadzenText Text="@(" x " + stretchFactor)" Style="width: 20%"></RadzenText>
+</RadzenStack>
+
+<!-- Scrolling log list -->
+<div id="logContainer" @ref="logContainer" style="height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; background-color: #f9f9f9;">
+    @foreach (var logEntry in logEntries)
+    {
+        <div>@logEntry</div>
+    }
+</div>
+
+
+@code{
+
+    private OpenClServiceInfo openClServiceInfo = new(null);
+    private bool allowTempSession = false;
+
+    private Guid selectedAudioId = Guid.Empty;
+    private IEnumerable<AudioObjInfo> audioInfos = [];
+    private AudioObjInfo selectedAudioInfo => audioInfos.FirstOrDefault(i => i.Guid == selectedAudioId) ?? new AudioObjInfo(null);
+
+    private string waveformBase64 = string.Empty;
+
+
+
+    private IEnumerable<OpenClKernelInfo> timestretchKernels = [];
+    private string selectedKernelName = string.Empty;
+
+    private int initialBpmInt => selectedAudioInfo.Bpm > 0 ? (int) (selectedAudioInfo.Bpm * 100) : 12000;
+    private float initialBpm => selectedAudioInfo.Bpm > 0 ? selectedAudioInfo.Bpm : 120f;
+
+    private int targetBpmInt = 12000;
+    private float targetBpm => targetBpmInt / 100f;
+    private double stretchFactor => initialBpm > 0 ? targetBpm / initialBpm : 1.0;
+    private int chunkSize = 16384;
+    private int overlapInt = 50;
+    private float overlap => overlapInt / 100f;
+
+
+
+    private int volumeInt = 66;
+    private float volume => volumeInt / 100f;
+    private double duration => selectedAudioInfo.Duration;
+
+    private readonly List<string> logEntries = [];
+    private ElementReference logContainer;
+
+
+
+    private void AddLogEntry(string message)
+    {
+        logEntries.Add($"{DateTime.Now:HH:mm:ss:fff} - {message}");
+        if (logEntries.Count > 100)
+        {
+            logEntries.RemoveAt(0);
+        }
+
+        StateHasChanged();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        AddLogEntry("Initializing Audio page...");
+        await RefreshInfos();
+    }
+
+    protected async Task RefreshInfos()
+    {
+        // Get OpenCL infos
+        openClServiceInfo = await ApiClient.GetOpenClServiceInfoAsync();
+
+        // Get timestretch kernels
+        timestretchKernels = await ApiClient.GetOpenClKernelsAsync("timestretch");
+
+        // Get audio infos
+        audioInfos = await ApiClient.GetAudiosAsync();
+
+        AddLogEntry($"Refreshed infos.");
+
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (logEntries.Any())
+        {
+            await JSRuntime.InvokeVoidAsync("eval", $@"
+                var el = document.getElementById('logContainer');
+                if (el) {{
+                    el.scrollTop = el.scrollHeight;
+                }}
+            ");
+        }
+    }
+
+    private async Task LoadWaveform(Guid? guid = null)
+    {
+        guid ??= selectedAudioId;
+        waveformBase64 = string.Empty;
+        if (guid == Guid.Empty)
+        {
+            AddLogEntry("Guid was empty, cleared audio data.");
+            return;
+        }
+        var obj = audioInfos.FirstOrDefault(i => i.Guid == guid.Value);
+        if (obj == null)
+        {
+            AddLogEntry($"No audio found for Guid '{guid.Value}'");
+            return;
+        }
+        try
+        {
+            var data = await ApiClient.GetAudioBase64(guid.Value);
+            waveformBase64 = $"data:image/png;base64,{data.WaveformBase64}";
+            AddLogEntry($"Retrieved base64 string from '{guid.Value}' (length: {data.WaveformBase64.Length})");
+        }
+        catch (Exception ex)
+        {
+            waveformBase64 = string.Empty;
+            AddLogEntry($"Error getting base64 string for waveform ''{guid.Value}': " + ex);
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    protected async Task OnAudioUpload(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            var file = e.File;
+            if (file.Size > 0)
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 512 * 1024 * 1024); // Max 512 MB
+                FileParameter fp = new FileParameter(stream, file.Name, file.ContentType);
+                var info = await ApiClient.UploadAudioAsync(fp);
+                AddLogEntry($"Uploaded '{info.Name}' successfully.");
+                await RefreshInfos();
+            }
+        }
+        catch (Exception ex)
+        {
+            AddLogEntry($"Error uploading audio: {ex.Message}");
+        }
+    }
+
+    protected async Task OnDownloadSelected()
+    {
+        Guid? guidToDownload = null;
+        string fileName = "";
+
+        if (selectedAudioId != Guid.Empty)
+        {
+            if (selectedAudioInfo.Guid != Guid.Empty)
+            {
+                guidToDownload = selectedAudioInfo.Guid;
+                fileName = selectedAudioInfo.Name;
+            }
+        }
+
+        if (guidToDownload.HasValue)
+        {
+            AddLogEntry($"Downloading track with Guid: {guidToDownload.Value}...");
+            try
+            {
+                // Direkt die URL zum API-Endpunkt aufrufen
+                string downloadUrl = $"{ApiConfig.BaseUrl}/api/audio/download/{guidToDownload.Value}";
+
+                // Rufe die JavaScript-Funktion auf, um den Download zu starten
+                await JSRuntime.InvokeVoidAsync("downloadFileFromUrl", downloadUrl, $"{fileName}.wav");
+
+                // Füge diese Zeile hinzu:
+                AddLogEntry($"Got Download-URL: {downloadUrl}");
+
+                AddLogEntry($"Downloading '{fileName}' started.");
+            }
+            catch (Exception ex)
+            {
+                AddLogEntry($"Error downloading '{fileName}': {ex.Message}");
+            }
+        }
+        else
+        {
+            AddLogEntry("No audio selected to download.");
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task OnRemoveAudioObj()
+    {
+        if (selectedAudioId == Guid.Empty)
+        {
+            AddLogEntry("No audio selected to remove.");
+            return;
+        }
+
+        var result = await ApiClient.RemoveAudioAsync(selectedAudioId);
+
+        if (result == true)
+        {
+            AddLogEntry($"Track with Guid {selectedAudioId} removed successfully.");
+            await RefreshInfos();
+        }
+        else
+        {
+            AddLogEntry($"Failed to remove track with Guid {selectedAudioId}.");
+        }
+
+        selectedAudioId = Guid.Empty;
+
+        StateHasChanged();
+    }
+
+    private async Task Play()
+    {
+        if (selectedAudioId == Guid.Empty)
+        {
+            AddLogEntry("No audio selected to play.");
+            return;
+        }
+        try
+        {
+            await ApiClient.PlayAudioAsync(selectedAudioId, volume);
+            AddLogEntry($"Playing audio '{selectedAudioInfo.Name}' at volume {volumeInt}%.");
+        }
+        catch (Exception ex)
+        {
+            AddLogEntry($"Error playing audio: {ex.Message}");
+        }
+    }
+
+    private async Task StopAll()
+    {
+        try
+        {
+            await ApiClient.StopAllAudioAsync();
+            AddLogEntry("Stopped all audio playback.");
+        }
+        catch (Exception ex)
+        {
+            AddLogEntry($"Error stopping audio: {ex.Message}");
+        }
+    }
+
+    private async Task ExecuteTimestretch()
+    {
+        if (selectedAudioId == Guid.Empty)
+        {
+            AddLogEntry("No audio selected for timestretch.");
+            return;
+        }
+        if (string.IsNullOrEmpty(selectedKernelName))
+        {
+            AddLogEntry("No timestretch kernel selected.");
+            return;
+        }
+        try
+        {
+            await ApiClient.ExecuteTimestretchAsync(selectedAudioId, selectedKernelName, "", stretchFactor, chunkSize, overlap, false, allowTempSession);
+            AddLogEntry($"Executed timestretch on '{selectedAudioInfo.Name}' using kernel '{selectedKernelName}'.");
+            await RefreshInfos();
+        }
+        catch (Exception ex)
+        {
+            AddLogEntry($"Error executing timestretch: {ex.Message}");
+        }
+        finally
+        {
+            await LoadWaveform(selectedAudioId);
+            await Task.Yield();
+        }
+    }
+
+}

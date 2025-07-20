@@ -1,0 +1,38 @@
+﻿@inherits LayoutComponentBase
+
+<RadzenLayout>
+    <RadzenHeader>
+        <RadzenRow AlignItems="AlignItems.Center">
+            <RadzenColumn>
+                <RadzenSidebarToggle Click="@SidebarToggleClick" />
+            </RadzenColumn>
+            <RadzenColumn>
+                <div style="font-size: 24px; font-weight: bold;">Fractality WebApp</div>
+            </RadzenColumn>
+        </RadzenRow>
+    </RadzenHeader>
+    <RadzenSidebar @bind-Expanded="@sidebarExpanded">
+        <RadzenPanelMenu>
+            <RadzenPanelMenuItem Text="Home" Path="" Icon="home" Match="NavLinkMatch.All" />
+            <RadzenPanelMenuItem Text="Fractals" Path="fractals" Icon="widgets" /> @* Icon ist ein Vorschlag *@
+            <RadzenPanelMenuItem Text="Audio" Path="audio" Icon="audiotrack" /> @* Icon ist ein Vorschlag *@
+        </RadzenPanelMenu>
+    </RadzenSidebar>
+    <RadzenBody>
+        <RadzenContent Container="main">
+            @Body
+        </RadzenContent>
+    </RadzenBody>
+    <RadzenFooter>
+        <div class="text-center">© 2025 alarmclock-kisser</div>
+    </RadzenFooter>
+</RadzenLayout>
+
+@code {
+    bool sidebarExpanded = false;
+
+    void SidebarToggleClick()
+    {
+        sidebarExpanded = !sidebarExpanded;
+    }
+}
